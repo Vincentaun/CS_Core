@@ -1,0 +1,159 @@
+# Reload and parse the SIC assembler source file again
+file_path = r"C:\Users\User\Downloads\SIC_input.txt"
+
+# Read the SIC input file
+with open(file_path, 'r') as file:
+    sic_source = file.readlines()
+
+# Reinitialize assembler data structures
+location_counter = 0
+symbol_table = {}
+object_codes = []
+instructions = []
+errors = []
+start_address = 0
+
+# SIC opcode table
+sic_opcode_table = {
+    "LDA": "00", "LDX": "04", "LDL": "08",
+    "STA": "0C", "STX": "10", "STL": "14",
+    "ADD": "18", "SUB": "1C", "MUL": "20",
+    "DIV": "24", "COMP": "28", "TIX": "2C",
+    "JEQ": "30", "JGT": "34", "JLT": "38",
+    "JSUB": "48", "RSUB": "4C", "RD": "D8",
+    "WD": "DC", "TD": "E0", "J": "3C"
+}
+
+# Function to handle WORD directive with support for negative values
+def process_word(value):
+    int_value = int(value)
+    if int_value >= 0:
+        return f"{int_value:06X}"
+    else:
+        # Calculate two's complement for 24-bit
+        twos_complement = (1 << 24) + int_value
+        return f"{twos_complement:06X}"
+
+# Pass 1: Generate location counter and symbol table
+for line in sic_source:
+    line = line.strip()
+    if not line or line.startswith('.'):  # Ignore comments and empty lines
+        continue
+
+    tokens = line.split()
+    if len(tokens) == 3:  # Label + Instruction + Operand
+        label, mnemonic, operand = tokens
+    elif len(tokens) == 2:  # Instruction + Operand
+        label, mnemonic, operand = None, tokens[0], tokens[1]
+    elif len(tokens) == 1:  # Only Instruction
+        label, mnemonic, operand = None, tokens[0], None
+    else:
+        errors.append(f"Invalid line format: {line}")
+        continue
+
+    if mnemonic == "START":
+        start_address = int(operand, 16)
+        location_counter = start_address
+        continue
+
+    # Add label to symbol table
+    if label:
+        if label in symbol_table:
+            errors.append(f"Duplicate label: {label}")
+        else:
+            symbol_table[label] = location_counter
+
+    # Calculate size of the current line
+    if mnemonic == "WORD":
+        location_counter += 3
+    elif mnemonic == "RESW":
+        location_counter += int(operand) * 3
+    elif mnemonic == "RESB":
+        location_counter += int(operand)
+    elif mnemonic == "BYTE":
+        if operand.startswith("C'"):
+            location_counter += len(operand) - 3
+        elif operand.startswith("X'"):
+            location_counter += (len(operand) - 3) // 2
+    elif mnemonic in sic_opcode_table:
+        location_counter += 3
+
+# Pass 2: Generate object code
+location_counter = start_address
+formatted_lines = []
+
+for line in sic_source:
+    line = line.strip()
+    if not line or line.startswith('.'):  # Ignore comments and empty lines
+        continue
+
+    tokens = line.split()
+    if len(tokens) == 3:  # Label + Instruction + Operand
+        label, mnemonic, operand = tokens
+    elif len(tokens) == 2:  # Instruction + Operand
+        label, mnemonic, operand = None, tokens[0], tokens[1]
+    elif len(tokens) == 1:  # Only Instruction
+        label, mnemonic, operand = None, tokens[0], None
+    else:
+        continue
+
+    if mnemonic == "START":
+        formatted_lines.append((f"{location_counter:04X}", line, "-"))
+        continue
+
+    if mnemonic in sic_opcode_table:
+        opcode = sic_opcode_table[mnemonic]
+        if operand and ',' in operand:
+            operand_label, _ = operand.split(',')
+            address = symbol_table.get(operand_label, 0) | 0x8000
+        else:
+            address = symbol_table.get(operand, 0) if operand else 0
+        object_code = f"{opcode}{address:04X}"
+        formatted_lines.append((f"{location_counter:04X}", line, object_code))
+        location_counter += 3
+    elif mnemonic == "WORD":
+        object_code = process_word(operand)
+        formatted_lines.append((f"{location_counter:04X}", line, object_code))
+        location_counter += 3
+    elif mnemonic == "BYTE":
+        if operand.startswith("C'"):
+            object_code = ''.join(f"{ord(c):02X}" for c in operand[2:-1])
+        elif operand.startswith("X'"):
+            object_code = operand[2:-1].upper()
+        else:
+            object_code = "00"
+        formatted_lines.append((f"{location_counter:04X}", line, object_code))
+        location_counter += len(object_code) // 2
+    elif mnemonic in {"RESW", "RESB"}:
+        formatted_lines.append((f"{location_counter:04X}", line, "-"))
+        if mnemonic == "RESW":
+            location_counter += int(operand) * 3
+        elif mnemonic == "RESB":
+            location_counter += int(operand)
+    elif mnemonic == "END":
+        formatted_lines.append((f"{location_counter:04X}", line, "-"))
+        break
+
+# Save the formatted table to a file
+output_file_path = r"C:\Users\User\Downloads\SIC_output.txt"
+
+with open(output_file_path, 'w') as file:
+    file.write(f"{'Location Code':<25} {'Source Statement':<30} {'Object Code':<10}\n")
+    file.write("-" * 60 + "\n")
+    for loc_code, source, obj_code in formatted_lines:
+        source_break = str(source).split("\t")
+        if len(source_break) == 3 :
+            label = source_break[0]
+            mnemonic = source_break[1]
+            operand = source_break[2]
+        elif len(source_break) == 2 :
+            label = ""
+            mnemonic = source_break[0]
+            operand = source_break[1]
+        else :
+            label = ""
+            mnemonic = source_break[0]
+            operand = ""
+        file.write(f"{loc_code:<15} {label:<10} {mnemonic:<10} {operand:<10} {obj_code:>20}\n")
+
+output_file_path
